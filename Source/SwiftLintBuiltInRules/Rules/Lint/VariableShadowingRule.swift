@@ -143,6 +143,68 @@ struct VariableShadowingRule: Rule {
                 }
             }
             """),
+            Example("""
+            var foo = 1
+            do {
+                let ↓foo = 2
+            }
+            """),
+            Example("""
+            var bar = 1
+            func test() {
+                let ↓bar = 2
+            }
+            """),
+            Example("""
+            var a = 1
+            if let a = Optional(2) {
+                let ↓a = 3
+                print(a)
+            }
+            """),
+            Example("""
+            var i = 1
+            for i in 1...3 {
+                let ↓i = 2
+                print(i)
+            }
+            """),
+            Example("""
+            func test() {
+                var a = 1
+                do {
+                    var ↓a = 2
+                    print(a)
+                }
+            }
+            """),
+            Example("""
+            func test() {
+                var a = 1
+                if true {
+                    var ↓a = 2
+                    print(a)
+                }
+            }
+            """),
+            Example("""
+            func test() {
+                var a = 1
+                for _ in 0..<1 {
+                    var ↓a = 2
+                    print(a)
+                }
+            }
+            """),
+            Example("""
+            func test() {
+                var a = 1
+                while true {
+                    var ↓a = 2
+                    break
+                }
+            }
+            """),
         ]
     )
 }
