@@ -156,9 +156,3 @@ final class XCTSpecificMatcherRuleGeneratedTests: SwiftLintTestCase {
         verifyRule(XCTSpecificMatcherRule.description)
     }
 }
-
-final class YodaConditionRuleGeneratedTests: SwiftLintTestCase {
-    func testWithDefaultConfiguration() {
-        verifyRule(YodaConditionRule.description)
-    }
-}
