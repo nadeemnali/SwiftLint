@@ -51,6 +51,7 @@
   and FEFF formatting character (U+FEFF) in string literals, which can cause hard-to-debug issues.  
   [kapitoshka438](https://github.com/kapitoshka438)
   [#6045](https://github.com/realm/SwiftLint/issues/6045)
+
 * Add `variable_shadowing` rule that flags when a variable declaration shadows
   an identifier from an outer scope.  
   [nadeemnali](https://github.com/nadeemnali)
