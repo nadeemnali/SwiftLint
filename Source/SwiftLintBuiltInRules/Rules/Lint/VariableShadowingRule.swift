@@ -3,7 +3,7 @@ import SwiftSyntax
 
 @SwiftSyntaxRule
 struct VariableShadowingRule: Rule {
-    var configuration = SeverityConfiguration<Self>(.warning)
+    var configuration = VariableShadowingConfiguration()
 
     static let description = RuleDescription(
         identifier: "variable_shadowing",
@@ -16,7 +16,7 @@ struct VariableShadowingRule: Rule {
             func test(a: String?) {
                 print(a)
             }
-            """),
+            """, configuration: ["ignore_parameters": true]),
             Example("""
             var a: String = "hello"
             if let b = a {
@@ -157,14 +157,14 @@ struct VariableShadowingRule: Rule {
             """),
             Example("""
             var a = 1
-            if let a = Optional(2) {
+            if let ↓a = Optional(2) {
                 let ↓a = 3
                 print(a)
             }
             """),
             Example("""
             var i = 1
-            for i in 1...3 {
+            for ↓i in 1...3 {
                 let ↓i = 2
                 print(i)
             }
@@ -205,16 +205,28 @@ struct VariableShadowingRule: Rule {
                 }
             }
             """),
+            Example("""
+            var a = 1
+            if let ↓a = Optional(2) {}
+            """),
+            Example("""
+            var i = 1
+            for ↓i in 1...3 {}
+            """),
+            Example("""
+            var a: String?
+            func test(↓a: String?) {
+                print(a)
+            }
+            """, configuration: ["ignore_parameters": false]),
         ]
     )
 }
 
 private extension VariableShadowingRule {
-    final class Visitor: DeclaredIdentifiersTrackingVisitor<ConfigurationType> {
+    final class Visitor: DeclaredIdentifiersTrackingVisitor<VariableShadowingConfiguration> {
         override func visit(_ node: VariableDeclSyntax) -> SyntaxVisitorContinueKind {
-            // Early exit for member blocks (class/struct properties)
             if node.parent?.is(MemberBlockItemSyntax.self) == false {
-                // Check for shadowing BEFORE adding to scope
                 node.bindings.forEach { binding in
                     checkForShadowing(in: binding.pattern)
                 }
@@ -222,21 +234,63 @@ private extension VariableShadowingRule {
             return super.visit(node)
         }
 
+        override func visit(_ node: FunctionDeclSyntax) -> SyntaxVisitorContinueKind {
+            if !configuration.ignoreParameters {
+                for param in node.signature.parameterClause.parameters {
+                    let nameToken = param.secondName ?? param.firstName
+                    if nameToken.text != "_", isShadowingAnyScope(nameToken.text) {
+                        violations.append(nameToken.positionAfterSkippingLeadingTrivia)
+                    }
+                }
+            }
+            return super.visit(node)
+        }
+
+        override func visit(_ node: ForStmtSyntax) -> SyntaxVisitorContinueKind {
+            checkForBindingShadowing(in: node.pattern)
+            return super.visit(node)
+        }
+
+        override func visit(_ node: IfExprSyntax) -> SyntaxVisitorContinueKind {
+            for condition in node.conditions {
+                if let optBinding = condition.condition.as(OptionalBindingConditionSyntax.self) {
+                    checkForBindingShadowing(in: optBinding.pattern)
+                }
+            }
+            return super.visit(node)
+        }
+
+        // Used for VariableDecl: the new identifier is added to the *current* scope,
+        // so we only check ancestor scopes (dropLast).
         private func checkForShadowing(in pattern: PatternSyntax) {
-            // Handle direct identifier patterns
             if let identifier = pattern.as(IdentifierPatternSyntax.self) {
                 let identifierText = identifier.identifier.text
                 if isShadowingOuterScope(identifierText) {
                     violations.append(identifier.identifier.positionAfterSkippingLeadingTrivia)
                 }
             } else if let tuple = pattern.as(TuplePatternSyntax.self) {
-                // Recurse into tuple patterns: e.g., (a, b)
                 tuple.elements.forEach { element in
                     checkForShadowing(in: element.pattern)
                 }
             } else if let valueBinding = pattern.as(ValueBindingPatternSyntax.self) {
-                // Recurse into optional binding patterns: e.g., `if let a`, `while var (a, b)`
                 checkForShadowing(in: valueBinding.pattern)
+            }
+        }
+
+        // Used for if-let / for-loop bindings: the new identifier is added to a *child* scope,
+        // so we check all current scopes.
+        private func checkForBindingShadowing(in pattern: PatternSyntax) {
+            if let identifier = pattern.as(IdentifierPatternSyntax.self) {
+                let identifierText = identifier.identifier.text
+                if isShadowingAnyScope(identifierText) {
+                    violations.append(identifier.identifier.positionAfterSkippingLeadingTrivia)
+                }
+            } else if let tuple = pattern.as(TuplePatternSyntax.self) {
+                tuple.elements.forEach { element in
+                    checkForBindingShadowing(in: element.pattern)
+                }
+            } else if let valueBinding = pattern.as(ValueBindingPatternSyntax.self) {
+                checkForBindingShadowing(in: valueBinding.pattern)
             }
         }
 
@@ -248,6 +302,12 @@ private extension VariableShadowingRule {
                 return true
             }
             return false
+        }
+
+        /// Checks all scope levels including the current one. Used for parameter checking
+        /// since parameters are declared into a child scope, not the current one.
+        private func isShadowingAnyScope(_ identifier: String) -> Bool {
+            scope.contains { $0.contains { $0.declares(id: identifier) } }
         }
     }
 }
