@@ -1387,7 +1387,7 @@ variable_shadowing:
   severity: warning
   ignore_parameters: true
   meta:
-    opt-in: false
+    opt-in: true
     correctable: false
 vertical_parameter_alignment:
   severity: warning

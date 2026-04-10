@@ -1,7 +1,7 @@
 import SwiftLintCore
 import SwiftSyntax
 
-@SwiftSyntaxRule
+@SwiftSyntaxRule(optIn: true)
 struct VariableShadowingRule: Rule {
     var configuration = VariableShadowingConfiguration()
 
@@ -219,6 +219,23 @@ struct VariableShadowingRule: Rule {
                 print(a)
             }
             """, configuration: ["ignore_parameters": false]),
+            Example("""
+            struct S {
+                var a = 1
+                var b: Int {
+                    let ↓a = 2
+                    return a
+                }
+            }
+            """),
+            Example("""
+            var a: String?
+            while let ↓a = Optional("hello") {}
+            """),
+            Example("""
+            var a: String?
+            guard let ↓a = Optional("hello") else { return }
+            """),
         ]
     )
 }
@@ -260,8 +277,46 @@ private extension VariableShadowingRule {
             return super.visit(node)
         }
 
-        // Used for VariableDecl: the new identifier is added to the *current* scope,
-        // so we only check ancestor scopes (dropLast).
+        override func visit(_ node: WhileStmtSyntax) -> SyntaxVisitorContinueKind {
+            for condition in node.conditions {
+                if let optBinding = condition.condition.as(OptionalBindingConditionSyntax.self) {
+                    checkForBindingShadowing(in: optBinding.pattern)
+                }
+            }
+            return super.visit(node)
+        }
+
+        override func visit(_ node: GuardStmtSyntax) -> SyntaxVisitorContinueKind {
+            for condition in node.conditions {
+                if let optBinding = condition.condition.as(OptionalBindingConditionSyntax.self) {
+                    checkForBindingShadowing(in: optBinding.pattern)
+                }
+            }
+            return super.visit(node)
+        }
+
+        override func visit(_ node: MemberBlockSyntax) -> SyntaxVisitorContinueKind {
+            let result = super.visit(node)
+            if let parent = node.parent,
+               [.actorDecl, .classDecl, .enumDecl, .structDecl].contains(parent.kind) {
+                for member in node.members {
+                    if let varDecl = member.decl.as(VariableDeclSyntax.self) {
+                        for binding in varDecl.bindings {
+                            if let id = binding.pattern.as(IdentifierPatternSyntax.self)?.identifier {
+                                scope.modifyLast { $0.append(.localVariable(name: id)) }
+                            }
+                        }
+                    }
+                }
+            }
+            return result
+        }
+
+        // Used for VariableDecl: checks only ancestor scopes (dropLast), not the current scope.
+        // This avoids false positives for same-scope redeclarations, which are compile errors in
+        // Swift and are not shadowing. Using isShadowingAnyScope here would incorrectly flag code
+        // where the same name appears twice at the same scope level (e.g. inside a disabled lint
+        // region followed by an enabled one).
         private func checkForShadowing(in pattern: PatternSyntax) {
             if let identifier = pattern.as(IdentifierPatternSyntax.self) {
                 let identifierText = identifier.identifier.text
@@ -277,8 +332,9 @@ private extension VariableShadowingRule {
             }
         }
 
-        // Used for if-let / for-loop bindings: the new identifier is added to a *child* scope,
-        // so we check all current scopes.
+        // Used for if-let / for-loop / while-let / guard-let bindings: the binding is added to a
+        // child scope, so checking all current scopes (including the one where the outer variable
+        // lives) is correct and necessary.
         private func checkForBindingShadowing(in pattern: PatternSyntax) {
             if let identifier = pattern.as(IdentifierPatternSyntax.self) {
                 let identifierText = identifier.identifier.text
@@ -296,7 +352,6 @@ private extension VariableShadowingRule {
 
         private func isShadowingOuterScope(_ identifier: String) -> Bool {
             guard scope.count > 1 else { return false }
-
             for scopeDeclarations in scope.dropLast() where
                 scopeDeclarations.contains(where: { $0.declares(id: identifier) }) {
                 return true
