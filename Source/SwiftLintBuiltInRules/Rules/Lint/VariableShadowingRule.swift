@@ -255,7 +255,7 @@ private extension VariableShadowingRule {
             if !configuration.ignoreParameters {
                 for param in node.signature.parameterClause.parameters {
                     let nameToken = param.secondName ?? param.firstName
-                    if nameToken.text != "_", isShadowingAnyScope(nameToken.text) {
+                    if nameToken.text != "_", hasSeenDeclaration(for: nameToken.text) {
                         violations.append(nameToken.positionAfterSkippingLeadingTrivia)
                     }
                 }
@@ -338,7 +338,7 @@ private extension VariableShadowingRule {
         private func checkForBindingShadowing(in pattern: PatternSyntax) {
             if let identifier = pattern.as(IdentifierPatternSyntax.self) {
                 let identifierText = identifier.identifier.text
-                if isShadowingAnyScope(identifierText) {
+                if hasSeenDeclaration(for: identifierText) {
                     violations.append(identifier.identifier.positionAfterSkippingLeadingTrivia)
                 }
             } else if let tuple = pattern.as(TuplePatternSyntax.self) {
@@ -357,12 +357,6 @@ private extension VariableShadowingRule {
                 return true
             }
             return false
-        }
-
-        /// Checks all scope levels including the current one. Used for parameter checking
-        /// since parameters are declared into a child scope, not the current one.
-        private func isShadowingAnyScope(_ identifier: String) -> Bool {
-            scope.contains { $0.contains { $0.declares(id: identifier) } }
         }
     }
 }
