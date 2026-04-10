@@ -102,6 +102,30 @@ struct VariableShadowingRule: Rule {
                 print(item)
             }
             """),
+            Example("""
+            let a: Int?
+            if let a { print(a) }
+            """),
+            Example("""
+            let a: Int?
+            guard let a else { return }
+            """),
+            Example("""
+            let a: Int?
+            while let a { print(a) }
+            """),
+            Example("""
+            var a = 1
+            if let a = a {
+                print(a)
+            }
+            """),
+            Example("""
+            func test() {
+                var a = 1
+                var b = 2
+            }
+            """),
         ],
         triggeringExamples: [
             Example("""
@@ -271,7 +295,7 @@ private extension VariableShadowingRule {
         override func visit(_ node: IfExprSyntax) -> SyntaxVisitorContinueKind {
             for condition in node.conditions {
                 if let optBinding = condition.condition.as(OptionalBindingConditionSyntax.self) {
-                    checkForBindingShadowing(in: optBinding.pattern)
+                    checkForBindingShadowing(in: optBinding.pattern, binding: optBinding)
                 }
             }
             return super.visit(node)
@@ -280,7 +304,7 @@ private extension VariableShadowingRule {
         override func visit(_ node: WhileStmtSyntax) -> SyntaxVisitorContinueKind {
             for condition in node.conditions {
                 if let optBinding = condition.condition.as(OptionalBindingConditionSyntax.self) {
-                    checkForBindingShadowing(in: optBinding.pattern)
+                    checkForBindingShadowing(in: optBinding.pattern, binding: optBinding)
                 }
             }
             return super.visit(node)
@@ -289,7 +313,7 @@ private extension VariableShadowingRule {
         override func visit(_ node: GuardStmtSyntax) -> SyntaxVisitorContinueKind {
             for condition in node.conditions {
                 if let optBinding = condition.condition.as(OptionalBindingConditionSyntax.self) {
-                    checkForBindingShadowing(in: optBinding.pattern)
+                    checkForBindingShadowing(in: optBinding.pattern, binding: optBinding)
                 }
             }
             return super.visit(node)
@@ -312,11 +336,8 @@ private extension VariableShadowingRule {
             return result
         }
 
-        // Used for VariableDecl: checks only ancestor scopes (dropLast), not the current scope.
-        // This avoids false positives for same-scope redeclarations, which are compile errors in
-        // Swift and are not shadowing. Using isShadowingAnyScope here would incorrectly flag code
-        // where the same name appears twice at the same scope level (e.g. inside a disabled lint
-        // region followed by an enabled one).
+        // For VariableDecl: checks only ancestor scopes, not current scope.
+        // Avoids false positives for same-scope redeclarations (compile errors in Swift).
         private func checkForShadowing(in pattern: PatternSyntax) {
             if let identifier = pattern.as(IdentifierPatternSyntax.self) {
                 let identifierText = identifier.identifier.text
@@ -332,22 +353,39 @@ private extension VariableShadowingRule {
             }
         }
 
-        // Used for if-let / for-loop / while-let / guard-let bindings: the binding is added to a
-        // child scope, so checking all current scopes (including the one where the outer variable
-        // lives) is correct and necessary.
-        private func checkForBindingShadowing(in pattern: PatternSyntax) {
+        // For optional bindings - skips idiomatic patterns (if let a / if let a = a)
+        private func checkForBindingShadowing(
+            in pattern: PatternSyntax,
+            binding: OptionalBindingConditionSyntax? = nil
+        ) {
             if let identifier = pattern.as(IdentifierPatternSyntax.self) {
                 let identifierText = identifier.identifier.text
+                if let binding, isIdiomatic(pattern: identifier, binding: binding) {
+                    return
+                }
                 if hasSeenDeclaration(for: identifierText) {
                     violations.append(identifier.identifier.positionAfterSkippingLeadingTrivia)
                 }
             } else if let tuple = pattern.as(TuplePatternSyntax.self) {
                 tuple.elements.forEach { element in
-                    checkForBindingShadowing(in: element.pattern)
+                    checkForBindingShadowing(in: element.pattern, binding: binding)
                 }
             } else if let valueBinding = pattern.as(ValueBindingPatternSyntax.self) {
-                checkForBindingShadowing(in: valueBinding.pattern)
+                checkForBindingShadowing(in: valueBinding.pattern, binding: binding)
             }
+        }
+
+        // Idiomatic: shorthand (if let a) or identity (if let a = a)
+        private func isIdiomatic(
+            pattern: IdentifierPatternSyntax,
+            binding: OptionalBindingConditionSyntax
+        ) -> Bool {
+            let patternName = pattern.identifier.text
+            guard let initializer = binding.initializer else { return true }
+            if let identifierExpr = initializer.value.as(DeclReferenceExprSyntax.self) {
+                return identifierExpr.baseName.text == patternName
+            }
+            return false
         }
 
         private func isShadowingOuterScope(_ identifier: String) -> Bool {
