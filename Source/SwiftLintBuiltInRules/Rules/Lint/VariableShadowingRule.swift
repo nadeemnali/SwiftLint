@@ -288,14 +288,14 @@ private extension VariableShadowingRule {
         }
 
         override func visit(_ node: ForStmtSyntax) -> SyntaxVisitorContinueKind {
-            checkForBindingShadowing(in: node.pattern)
+            checkForShadowing(in: node.pattern)
             return super.visit(node)
         }
 
         override func visit(_ node: IfExprSyntax) -> SyntaxVisitorContinueKind {
             for condition in node.conditions {
                 if let optBinding = condition.condition.as(OptionalBindingConditionSyntax.self) {
-                    checkForBindingShadowing(in: optBinding.pattern, binding: optBinding)
+                    checkForShadowing(in: optBinding.pattern, binding: optBinding)
                 }
             }
             return super.visit(node)
@@ -304,7 +304,7 @@ private extension VariableShadowingRule {
         override func visit(_ node: WhileStmtSyntax) -> SyntaxVisitorContinueKind {
             for condition in node.conditions {
                 if let optBinding = condition.condition.as(OptionalBindingConditionSyntax.self) {
-                    checkForBindingShadowing(in: optBinding.pattern, binding: optBinding)
+                    checkForShadowing(in: optBinding.pattern, binding: optBinding)
                 }
             }
             return super.visit(node)
@@ -313,7 +313,7 @@ private extension VariableShadowingRule {
         override func visit(_ node: GuardStmtSyntax) -> SyntaxVisitorContinueKind {
             for condition in node.conditions {
                 if let optBinding = condition.condition.as(OptionalBindingConditionSyntax.self) {
-                    checkForBindingShadowing(in: optBinding.pattern, binding: optBinding)
+                    checkForShadowing(in: optBinding.pattern, binding: optBinding)
                 }
             }
             return super.visit(node)
@@ -336,28 +336,9 @@ private extension VariableShadowingRule {
             return result
         }
 
-        // For VariableDecl: checks only ancestor scopes, not current scope.
-        // Avoids false positives for same-scope redeclarations (compile errors in Swift).
-        private func checkForShadowing(in pattern: PatternSyntax) {
-            if let identifier = pattern.as(IdentifierPatternSyntax.self) {
-                let identifierText = identifier.identifier.text
-                if isShadowingOuterScope(identifierText) {
-                    violations.append(identifier.identifier.positionAfterSkippingLeadingTrivia)
-                }
-            } else if let tuple = pattern.as(TuplePatternSyntax.self) {
-                tuple.elements.forEach { element in
-                    checkForShadowing(in: element.pattern)
-                }
-            } else if let valueBinding = pattern.as(ValueBindingPatternSyntax.self) {
-                checkForShadowing(in: valueBinding.pattern)
-            }
-        }
-
-        // For optional bindings - skips idiomatic patterns (if let a / if let a = a)
-        private func checkForBindingShadowing(
-            in pattern: PatternSyntax,
-            binding: OptionalBindingConditionSyntax? = nil
-        ) {
+        // Checking shadowing in both variable declarations and optional bindings.
+        // For optional bindings, skips idiomatic patterns (if let a / if let a = a).
+        private func checkForShadowing(in pattern: PatternSyntax, binding: OptionalBindingConditionSyntax? = nil) {
             if let identifier = pattern.as(IdentifierPatternSyntax.self) {
                 let identifierText = identifier.identifier.text
                 if let binding, isIdiomatic(pattern: identifier, binding: binding) {
@@ -368,10 +349,10 @@ private extension VariableShadowingRule {
                 }
             } else if let tuple = pattern.as(TuplePatternSyntax.self) {
                 tuple.elements.forEach { element in
-                    checkForBindingShadowing(in: element.pattern, binding: binding)
+                    checkForShadowing(in: element.pattern, binding: binding)
                 }
             } else if let valueBinding = pattern.as(ValueBindingPatternSyntax.self) {
-                checkForBindingShadowing(in: valueBinding.pattern, binding: binding)
+                checkForShadowing(in: valueBinding.pattern, binding: binding)
             }
         }
 
@@ -384,15 +365,6 @@ private extension VariableShadowingRule {
             guard let initializer = binding.initializer else { return true }
             if let identifierExpr = initializer.value.as(DeclReferenceExprSyntax.self) {
                 return identifierExpr.baseName.text == patternName
-            }
-            return false
-        }
-
-        private func isShadowingOuterScope(_ identifier: String) -> Bool {
-            guard scope.count > 1 else { return false }
-            for scopeDeclarations in scope.dropLast() where
-                scopeDeclarations.contains(where: { $0.declares(id: identifier) }) {
-                return true
             }
             return false
         }
